@@ -14,6 +14,7 @@ import type { Detail } from './procedural/plant'
 import { hashSeed, makeRng } from './procedural/rng'
 import { useDetail, dprFor } from '../hooks/useDetail'
 import { useGarden } from '../store/useGarden'
+import { FirstPersonWalker } from './FirstPersonWalker'
 
 /* ------------------------------------------------------------------ *
  * The garden: six themed beds arranged around a central plaza, every
@@ -421,6 +422,20 @@ interface GardenSceneProps {
   onSelectBed: (bed: GardenBed) => void
   idleSpin: boolean
   showLabels: boolean
+  /** When true, OrbitControls are suspended and first-person walking takes over. */
+  walkMode?: boolean
+  /** Called when the walker wants to exit (Escape key). */
+  onExitWalk?: () => void
+  /** Plant id the walk-mode crosshair is currently aimed at (for highlight). */
+  walkNearby?: string | null
+  /** Called by the walker when the player looks at / clicks on a plant. */
+  onWalkSelect?: (id: string) => void
+  /** Called every frame with the plant id under the crosshair (or null). */
+  onWalkNearby?: (id: string | null) => void
+  /** When true pointer lock is released so the user can click UI elements. */
+  cursorFree?: boolean
+  /** Called to toggle cursor-free mode. */
+  onToggleCursor?: () => void
 }
 
 function SceneContents({
@@ -432,6 +447,13 @@ function SceneContents({
   onSelectBed,
   idleSpin,
   showLabels,
+  walkMode = false,
+  onExitWalk,
+  walkNearby,
+  onWalkSelect,
+  onWalkNearby,
+  cursorFree = false,
+  onToggleCursor,
   detail,
   dark,
 }: GardenSceneProps & { detail: Detail; dark: boolean }) {
@@ -471,7 +493,11 @@ function SceneContents({
 
       <Suspense fallback={null}>
         {placements.map(({ plant, position, spin, scale }) => (
-          <group key={plant.id} position={[position[0], 0.13, position[2]]}>
+          <group
+            key={plant.id}
+            position={[position[0], 0.13, position[2]]}
+            userData={{ plantId: plant.id }}
+          >
             <PlantObject
               plant={plant}
               detail={detail}
@@ -480,28 +506,54 @@ function SceneContents({
               grow
               showSoil={false}
               castShadow={shadows}
-              highlight={hoveredId === plant.id || selectedId === plant.id}
-              onPointerOver={(e) => {
-                ;(e as unknown as { stopPropagation: () => void }).stopPropagation()
-                onHover(plant.id)
-                document.body.style.cursor = 'pointer'
-              }}
-              onPointerOut={() => {
-                onHover(null)
-                document.body.style.cursor = ''
-              }}
-              onClick={(e) => {
-                ;(e as unknown as { stopPropagation: () => void }).stopPropagation()
-                onSelect(plant.id)
-              }}
+              highlight={
+                walkMode
+                  ? walkNearby === plant.id
+                  : hoveredId === plant.id || selectedId === plant.id
+              }
+              onPointerOver={
+                walkMode
+                  ? undefined
+                  : (e) => {
+                      ;(e as unknown as { stopPropagation: () => void }).stopPropagation()
+                      onHover(plant.id)
+                      document.body.style.cursor = 'pointer'
+                    }
+              }
+              onPointerOut={
+                walkMode
+                  ? undefined
+                  : () => {
+                      onHover(null)
+                      document.body.style.cursor = ''
+                    }
+              }
+              onClick={
+                walkMode
+                  ? undefined
+                  : (e) => {
+                      ;(e as unknown as { stopPropagation: () => void }).stopPropagation()
+                      onSelect(plant.id)
+                    }
+              }
             />
-            {(hoveredId === plant.id || selectedId === plant.id) && (
+            {!walkMode && (hoveredId === plant.id || selectedId === plant.id) && (
               <Html position={[0, plant.model.height * scale + 0.22, 0]} center zIndexRange={[15, 0]}>
                 <span
                   className="pointer-events-none -translate-y-2 rounded-full px-2.5 py-1 text-[12px] font-medium whitespace-nowrap text-white shadow-lg"
                   style={{ background: plant.accent }}
                 >
                   {plant.name}
+                </span>
+              </Html>
+            )}
+            {walkMode && walkNearby === plant.id && (
+              <Html position={[0, plant.model.height * scale + 0.22, 0]} center zIndexRange={[15, 0]}>
+                <span
+                  className="pointer-events-none -translate-y-2 rounded-full px-2.5 py-1 text-[12px] font-medium whitespace-nowrap text-white shadow-lg animate-pulse"
+                  style={{ background: plant.accent }}
+                >
+                  {plant.name} — press E
                 </span>
               </Html>
             )}
@@ -527,7 +579,19 @@ function SceneContents({
           </Html>
         ))}
 
-      <CameraRig goal={goal} controls={controls} idleSpin={idleSpin} />
+      {/* Walk mode: swap OrbitControls for the first-person walker */}
+      {walkMode ? (
+        <FirstPersonWalker
+          active={walkMode}
+          onExit={onExitWalk ?? (() => {})}
+          cursorFree={cursorFree}
+          onToggleCursor={onToggleCursor ?? (() => {})}
+          onNearby={onWalkNearby}
+          onSelect={onWalkSelect}
+        />
+      ) : (
+        <CameraRig goal={goal} controls={controls} idleSpin={idleSpin} />
+      )}
     </>
   )
 }
@@ -549,7 +613,18 @@ export function GardenScene(props: GardenSceneProps) {
       }}
       onPointerMissed={() => props.onHover(null)}
     >
-      <SceneContents {...props} detail={detail} dark={dark} />
+      <SceneContents
+        {...props}
+        detail={detail}
+        dark={dark}
+        walkMode={props.walkMode}
+        onExitWalk={props.onExitWalk}
+        walkNearby={props.walkNearby}
+        onWalkSelect={props.onWalkSelect}
+        onWalkNearby={props.onWalkNearby}
+        cursorFree={props.cursorFree}
+        onToggleCursor={props.onToggleCursor}
+      />
     </Canvas>
   )
 }
